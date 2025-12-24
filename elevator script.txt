@@ -1,0 +1,386 @@
+-- elevator script attempt 2 lol
+ 
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+ 
+-- config stuff
+local config = {}
+config.speed = 5
+config.waitTime = 3
+config.floorHeight = 20
+config.maxFloors = 5
+config.elevatorSize = Vector3.new(8, 12, 8)
+config.maxWeight = 500 -- players can overload it
+ 
+-- calculate floor positions
+local floorPositions = {}
+for i = 1, config.maxFloors do
+	floorPositions[i] = (i - 1) * config.floorHeight
+end
+ 
+-- elevator storage
+local elevators = {}
+ 
+function createElevator(id, pos)
+	-- main elevator floor
+	local floor = Instance.new("Part")
+	floor.Name = "Elevator_" .. id
+	floor.Size = Vector3.new(config.elevatorSize.X, 1, config.elevatorSize.Z)
+	floor.Position = pos
+	floor.Anchored = true
+	floor.CanCollide = true
+	floor.BrickColor = BrickColor.new("Dark stone grey")
+	floor.Material = Enum.Material.Metal
+	floor.Parent = Workspace
+ 
+	-- walls
+	local backWall = Instance.new("Part")
+	backWall.Name = "BackWall"
+	backWall.Size = Vector3.new(config.elevatorSize.X, config.elevatorSize.Y, 0.2)
+	backWall.Position = pos + Vector3.new(0, config.elevatorSize.Y/2 - 0.5, -config.elevatorSize.Z/2 + 0.1)
+	backWall.Anchored = true
+	backWall.CanCollide = true
+	backWall.BrickColor = BrickColor.new("Dark stone grey")
+	backWall.Material = Enum.Material.Metal
+	backWall.Parent = floor
+ 
+	local leftWall = Instance.new("Part")
+	leftWall.Name = "LeftWall"
+	leftWall.Size = Vector3.new(0.2, config.elevatorSize.Y, config.elevatorSize.Z)
+	leftWall.Position = pos + Vector3.new(-config.elevatorSize.X/2 + 0.1, config.elevatorSize.Y/2 - 0.5, 0)
+	leftWall.Anchored = true
+	leftWall.CanCollide = true
+	leftWall.BrickColor = BrickColor.new("Dark stone grey")
+	leftWall.Material = Enum.Material.Metal
+	leftWall.Parent = floor
+ 
+	local rightWall = Instance.new("Part")
+	rightWall.Name = "RightWall"
+	rightWall.Size = Vector3.new(0.2, config.elevatorSize.Y, config.elevatorSize.Z)
+	rightWall.Position = pos + Vector3.new(config.elevatorSize.X/2 - 0.1, config.elevatorSize.Y/2 - 0.5, 0)
+	rightWall.Anchored = true
+	rightWall.CanCollide = true
+	rightWall.BrickColor = BrickColor.new("Dark stone grey")
+	rightWall.Material = Enum.Material.Metal
+	rightWall.Parent = floor
+ 
+	local gui = Instance.new("SurfaceGui")
+	gui.Face = Enum.NormalId.Front
+	gui.Parent = backWall
+ 
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(1, 0, 1, 0)
+	label.BackgroundTransparency = 1
+	label.Text = "Floor 1"
+	label.TextColor3 = Color3.new(1, 1, 1)
+	label.TextScaled = true
+	label.Font = Enum.Font.SourceSansBold
+	label.Parent = gui
+ 
+	-- doors
+	local door1 = Instance.new("Part")
+	door1.Name = "Door1"
+	door1.Size = Vector3.new(3.5, config.elevatorSize.Y, 0.2)
+	door1.Position = pos + Vector3.new(-2.25, config.elevatorSize.Y/2 - 0.5, config.elevatorSize.Z/2 - 0.1)
+	door1.Anchored = true
+	door1.CanCollide = true
+	door1.BrickColor = BrickColor.new("Dark stone grey")
+	door1.Material = Enum.Material.Metal
+	door1.Parent = floor
+ 
+	local door2 = Instance.new("Part")
+	door2.Name = "Door2"
+	door2.Size = Vector3.new(3.5, config.elevatorSize.Y, 0.2)
+	door2.Position = pos + Vector3.new(2.25, config.elevatorSize.Y/2 - 0.5, config.elevatorSize.Z/2 - 0.1)
+	door2.Anchored = true
+	door2.CanCollide = true
+	door2.BrickColor = BrickColor.new("Dark stone grey")
+	door2.Material = Enum.Material.Metal
+	door2.Parent = floor
+ 
+	local data = {
+		id = id,
+		part = floor,
+		walls = {backWall, leftWall, rightWall},
+		doors = {door1, door2},
+		floor = 1,
+		target = 1,
+		moving = false,
+		label = label,
+		queue = {},
+		lastMove = 0,
+		weight = 0,
+		playersInside = {}
+	}
+ 
+	elevators[id] = data
+	return data
+end
+ 
+function getElevator(id)
+	return elevators[id]
+end
+ 
+function callElevator(id, floorNum)
+	local elev = getElevator(id)
+	if not elev then
+		warn("elevator " .. tostring(id) .. " doesn't exist")
+		return
+	end
+ 
+	if floorNum < 1 or floorNum > config.maxFloors then
+		return
+	end
+ 
+	-- check queue
+	local inQueue = false
+	for _, f in pairs(elev.queue) do
+		if f == floorNum then
+			inQueue = true
+			break
+		end
+	end
+ 
+	if not inQueue and floorNum ~= elev.floor then
+		table.insert(elev.queue, floorNum)
+	end
+end
+ 
+function moveElevator(id, targetFloor)
+	local elev = getElevator(id)
+	if not elev then return end
+ 
+	if elev.moving then return end
+ 
+	-- weight check elevator wont move if overloaded
+	if elev.weight > config.maxWeight then
+		elev.label.Text = "OVERLOADED"
+		task.wait(2)
+		elev.label.Text = "Floor " .. elev.floor
+		return
+	end
+ 
+	elev.target = targetFloor
+	elev.moving = true
+ 
+	local startY = floorPositions[elev.floor]
+	local endY = floorPositions[targetFloor]
+	local dist = math.abs(endY - startY)
+	local timeNeeded = dist / config.speed
+ 
+	local t0 = tick()
+	local startPos = elev.part.Position
+ 
+	elev.label.Text = "Floor " .. targetFloor
+ 
+	-- close doors before moving
+	closeDoors(elev)
+ 
+	local conn
+	conn = RunService.Heartbeat:Connect(function()
+		local dt = tick() - t0
+		local p = math.min(dt / timeNeeded, 1)
+ 
+		local smooth = p * p * (3 - 2 * p)
+ 
+		local y = startY + (endY - startY) * smooth
+		elev.part.Position = Vector3.new(startPos.X, y, startPos.Z)
+ 
+		-- move doors and walls with elevator
+		for _, door in pairs(elev.doors) do
+			door.Position = Vector3.new(door.Position.X, y, door.Position.Z)
+		end
+		for _, wall in pairs(elev.walls) do
+			wall.Position = Vector3.new(wall.Position.X, y, wall.Position.Z)
+		end
+ 
+		if p >= 1 then
+			elev.floor = targetFloor
+			elev.moving = false
+			elev.lastMove = tick()
+			conn:Disconnect()
+ 
+			-- remove from queue
+			for i, f in pairs(elev.queue) do
+				if f == targetFloor then
+					table.remove(elev.queue, i)
+					break
+				end
+			end
+ 
+			-- open doors
+			openDoors(elev)
+ 
+			-- update players inside
+			updatePlayersInElevator(elev)
+		end
+	end)
+end
+ 
+function openDoors(elev)
+	for i, door in pairs(elev.doors) do
+		task.spawn(function()
+			door.CanCollide = false
+			local startPos = door.Position
+			local offset = i == 1 and -2.5 or 2.5
+			local targetPos = startPos + Vector3.new(offset, 0, 0)
+			local t = 0
+			while t < 0.5 do
+				t = t + RunService.Heartbeat:Wait()
+				local p = t / 0.5
+				door.Position = startPos:lerp(targetPos, p)
+			end
+		end)
+	end
+end
+ 
+function closeDoors(elev)
+	for i, door in pairs(elev.doors) do
+		task.spawn(function()
+			local startPos = door.Position
+			local basePos = elev.part.Position
+			local offset = i == 1 and -2.25 or 2.25
+			local targetPos = basePos + Vector3.new(offset, config.elevatorSize.Y/2 - 0.5, config.elevatorSize.Z/2 - 0.1)
+			local t = 0
+			while t < 0.5 do
+				t = t + RunService.Heartbeat:Wait()
+				local p = t / 0.5
+				door.Position = startPos:lerp(targetPos, p)
+			end
+			door.CanCollide = true
+		end)
+	end
+end
+ 
+function updatePlayersInElevator(elev)
+	-- check who's inside
+	elev.playersInside = {}
+	elev.weight = 0
+ 
+	for _, player in pairs(Players:GetPlayers()) do
+		if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+			local hrp = player.Character.HumanoidRootPart
+			local dist = (hrp.Position - elev.part.Position).Magnitude
+			if dist < 6 then
+				table.insert(elev.playersInside, player)
+				-- rough weight estimate
+				elev.weight = elev.weight + 50
+			end
+		end
+	end
+end
+ 
+function processQueue(id)
+	local elev = getElevator(id)
+	if not elev then return end
+ 
+	if elev.moving then return end
+	if tick() - elev.lastMove < config.waitTime then return end
+ 
+	if #elev.queue > 0 then
+		local nextFloor = elev.queue[1]
+		moveElevator(id, nextFloor)
+	end
+end
+ 
+function updateElevators()
+	for id, _ in pairs(elevators) do
+		processQueue(id)
+	end
+end
+ 
+-- button creation
+local buttons = {}
+ 
+function makeButton(elevId, floorNum, pos)
+	local btn = Instance.new("Part")
+	btn.Name = "Btn_Floor" .. floorNum
+	btn.Size = Vector3.new(2, 2, 0.5)
+	btn.Position = pos
+	btn.Anchored = true
+	btn.CanCollide = false
+	btn.BrickColor = BrickColor.new("Bright blue")
+	btn.Material = Enum.Material.Neon
+	btn.Transparency = 0.3
+	btn.Parent = Workspace
+ 
+	local clicker = Instance.new("ClickDetector")
+	clicker.MaxActivationDistance = 20
+	clicker.Parent = btn
+ 
+	local gui = Instance.new("SurfaceGui")
+	gui.Face = Enum.NormalId.Front
+	gui.Parent = btn
+ 
+	local txt = Instance.new("TextLabel")
+	txt.Size = UDim2.new(1, 0, 1, 0)
+	txt.BackgroundTransparency = 1
+	txt.Text = tostring(floorNum)
+	txt.TextColor3 = Color3.new(1, 1, 1)
+	txt.TextScaled = true
+	txt.Font = Enum.Font.SourceSansBold
+	txt.Parent = gui
+ 
+	buttons[btn] = {elevId = elevId, floor = floorNum}
+ 
+	clicker.MouseClick:Connect(function(player)
+		local btnData = buttons[btn]
+		if btnData then
+			callElevator(btnData.elevId, btnData.floor)
+			btn.BrickColor = BrickColor.new("Bright green")
+			task.wait(0.5)
+			btn.BrickColor = BrickColor.new("Bright blue")
+		end
+	end)
+ 
+	return btn
+end
+ 
+local function setup()
+	local startPos = Vector3.new(0, floorPositions[1], 0)
+	createElevator("main", startPos)
+ 
+	for f = 1, config.maxFloors do
+		local btnX = 10
+		local btnY = floorPositions[f] + 2
+		makeButton("main", f, Vector3.new(btnX, btnY, 0))
+	end
+ 
+	-- queue processor
+	task.spawn(function()
+		while true do
+			task.wait(0.5)
+			updateElevators()
+		end
+	end)
+ 
+	-- weight checker
+	task.spawn(function()
+		while true do
+			task.wait(1)
+			for _, elev in pairs(elevators) do
+				updatePlayersInElevator(elev)
+			end
+		end
+	end)
+ 
+	print("Elevator ready - " .. config.maxFloors .. " floors")
+end
+ 
+-- player stuff
+Players.PlayerAdded:Connect(function(player)
+	player.CharacterAdded:Connect(function(char)
+		-- teleport to first floor if they spawn in wrong place
+		task.wait(1)
+		if char:FindFirstChild("HumanoidRootPart") then
+			local hrp = char.HumanoidRootPart
+			if hrp.Position.Y < -10 then
+				hrp.Position = Vector3.new(0, floorPositions[1] + 5, 0)
+			end
+		end
+	end)
+end)
+ 
+setup()
+ 
